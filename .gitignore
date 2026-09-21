@@ -3,22 +3,23 @@
 ._*
 
 # Android / Gradle
-.gradle/
-**/build/
-local.properties
-*.iml
+android/.gradle/
+android/local.properties
+android/**/build/
+*.apk
+*.aab
+
+# IDEs
 .idea/
+.vscode/
+*.iml
 
-# Local secrets/config
+# Backend local configuration and runtime uploads
 backend/config.local.php
-.env
-.env.*
-!.env.example
-
-# Runtime uploads
 backend/uploads/*
 !backend/uploads/.gitkeep
 
-# Logs / temp
+# Logs / temporary files
 *.log
 *.tmp
+*.bak

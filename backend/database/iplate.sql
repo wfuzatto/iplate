@@ -35,3 +35,13 @@ CREATE TABLE IF NOT EXISTS iplate_vehicle_entries (
     INDEX idx_reservation (reservation),
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO iplate_users (name, username, password_hash, api_token)
+SELECT
+    'Administrador',
+    'admin',
+    '$2y$10$Z.qGcQ1cxSCunthlaJpgO.r4VZN0ONqHLeqvfas3dwrhKY4VHr2a.',
+    SHA2(UUID(), 256)
+WHERE NOT EXISTS (
+    SELECT 1 FROM iplate_users WHERE username = 'admin'
+);
