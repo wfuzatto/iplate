@@ -15,24 +15,24 @@ jobs:
           set -euo pipefail
 
           BASE="https://vale.expresso.app/iplate/backend/api"
-          USERNAME="admin"
-          PASSWORD="$(awk -F': ' '/^- senha:/{print $2; exit}' README.md)"
+          PASSWORD="$(grep -oE 'senha temporária será `[^`]+`' README.md | sed -E 's/.*`([^`]+)`.*/\1/' | head -n1 || true)"
 
           if [ -z "$PASSWORD" ]; then
-            echo "RESULT=PASSWORD_NOT_FOUND"
+            echo "RESULT=DEFAULT_PASSWORD_NOT_FOUND"
             exit 10
           fi
 
-          LOGIN="$(curl -fsS --max-time 20 -X POST "$BASE/login.php" -H 'Accept: application/json' --data-urlencode "username=$USERNAME" --data-urlencode "password=$PASSWORD")"
-          TOKEN="$(printf '%s' "$LOGIN" | python3 -c "import json,sys; d=json.load(sys.stdin); print(((d.get('user') or {}).get('api_token') or '').strip())")"
+          LOGIN="$(curl -sS --max-time 20 -X POST "$BASE/login.php" -H 'Accept: application/json' --data-urlencode "username=admin" --data-urlencode "password=$PASSWORD")"
+          LOGIN_OK="$(printf '%s' "$LOGIN" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('success') else 'false')" 2>/dev/null || echo false)"
+          TOKEN="$(printf '%s' "$LOGIN" | python3 -c "import json,sys; d=json.load(sys.stdin); print(((d.get('user') or {}).get('api_token') or '').strip())" 2>/dev/null || true)"
+
+          echo "LOGIN_SUCCESS=$LOGIN_OK"
 
           if [ -z "$TOKEN" ]; then
-            LOGIN_OK="$(printf '%s' "$LOGIN" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('success') else 'false')")"
             echo "RESULT=LOGIN_TOKEN_MISSING"
-            echo "LOGIN_SUCCESS=$LOGIN_OK"
             exit 11
           fi
 
-          LOOKUP="$(curl -fsS --max-time 20 -G "$BASE/reservation-search.php" --data-urlencode "api_token=$TOKEN" --data-urlencode "term=2505371" --data-urlencode "exact=1")"
+          LOOKUP="$(curl -sS --max-time 20 -G "$BASE/reservation-search.php" --data-urlencode "api_token=$TOKEN" --data-urlencode "term=2505371" --data-urlencode "exact=1")"
 
           printf '%s' "$LOOKUP" | python3 -c "import json,sys; d=json.load(sys.stdin); items=d.get('items') or []; m=next((x for x in items if str(x.get('reservation_code',''))=='2505371'), None); print('API_SUCCESS=' + ('true' if d.get('success') else 'false')); print('ITEM_COUNT=' + str(len(items))); print('FOUND=' + ('true' if m else 'false')); print('STATUS=' + str((m or {}).get('status',''))); print('HAS_GUEST_NAME=' + ('true' if bool(str((m or {}).get('guest_name','')).strip()) else 'false')); print('HAS_CHECKIN=' + ('true' if bool(str((m or {}).get('checkin_date','')).strip()) else 'false')); print('HAS_CHECKOUT=' + ('true' if bool(str((m or {}).get('checkout_date','')).strip()) else 'false')); print('GUEST_COUNT=' + str((m or {}).get('guest_count',''))); sys.exit(0 if m else 12)"
