@@ -14,6 +14,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 
 $term = trim((string) ($_GET['term'] ?? ''));
 $apiToken = trim((string) ($_GET['api_token'] ?? ''));
+$exact = (string) ($_GET['exact'] ?? '') === '1';
 
 if (mb_strlen($term) < 3) {
     echo json_encode(['success' => true, 'items' => []]);
@@ -54,34 +55,56 @@ try {
         PDO::ATTR_EMULATE_PREPARES => false,
     ]);
 
-    $like = '%' . $term . '%';
-    $stmt = $hotelariaPdo->prepare(
-        'SELECT
-            r.id AS reserva_id,
-            r.codigo,
-            r.status,
-            r.data_checkin,
-            r.data_checkout,
-            GROUP_CONCAT(DISTINCT h.nome ORDER BY h.nome SEPARATOR ", ") AS hospedes
-         FROM reservas r
-         LEFT JOIN reserva_hospedes rh ON rh.reserva_id = r.id AND rh.cliente_id = r.cliente_id
-         LEFT JOIN hospedes h ON h.id = rh.hospede_id
-         WHERE r.data_checkin = CURDATE()
-           AND r.status IN ("confirmada", "checkin")
-           AND (
-                r.codigo LIKE :like_codigo
-                OR COALESCE(h.nome, "") LIKE :like_nome
-           )
-         GROUP BY r.id, r.codigo, r.status, r.data_checkin, r.data_checkout
-         ORDER BY
-            CASE WHEN r.status = "checkin" THEN 0 ELSE 1 END,
-            r.codigo ASC
-         LIMIT 25'
-    );
-    $stmt->execute([
-        ':like_codigo' => $like,
-        ':like_nome' => $like,
-    ]);
+    if ($exact) {
+        $stmt = $hotelariaPdo->prepare(
+            'SELECT
+                r.id AS reserva_id,
+                r.codigo,
+                r.status,
+                r.data_checkin,
+                r.data_checkout,
+                COUNT(DISTINCT h.id) AS guest_count,
+                GROUP_CONCAT(DISTINCT h.nome ORDER BY h.nome SEPARATOR ", ") AS hospedes
+             FROM reservas r
+             LEFT JOIN reserva_hospedes rh ON rh.reserva_id = r.id AND rh.cliente_id = r.cliente_id
+             LEFT JOIN hospedes h ON h.id = rh.hospede_id
+             WHERE r.codigo = :codigo
+               AND r.status IN ("confirmada", "checkin")
+             GROUP BY r.id, r.codigo, r.status, r.data_checkin, r.data_checkout
+             LIMIT 1'
+        );
+        $stmt->execute([':codigo' => $term]);
+    } else {
+        $like = '%' . $term . '%';
+        $stmt = $hotelariaPdo->prepare(
+            'SELECT
+                r.id AS reserva_id,
+                r.codigo,
+                r.status,
+                r.data_checkin,
+                r.data_checkout,
+                COUNT(DISTINCT h.id) AS guest_count,
+                GROUP_CONCAT(DISTINCT h.nome ORDER BY h.nome SEPARATOR ", ") AS hospedes
+             FROM reservas r
+             LEFT JOIN reserva_hospedes rh ON rh.reserva_id = r.id AND rh.cliente_id = r.cliente_id
+             LEFT JOIN hospedes h ON h.id = rh.hospede_id
+             WHERE r.data_checkin = CURDATE()
+               AND r.status IN ("confirmada", "checkin")
+               AND (
+                    r.codigo LIKE :like_codigo
+                    OR COALESCE(h.nome, "") LIKE :like_nome
+               )
+             GROUP BY r.id, r.codigo, r.status, r.data_checkin, r.data_checkout
+             ORDER BY
+                CASE WHEN r.status = "checkin" THEN 0 ELSE 1 END,
+                r.codigo ASC
+             LIMIT 25'
+        );
+        $stmt->execute([
+            ':like_codigo' => $like,
+            ':like_nome' => $like,
+        ]);
+    }
 
     $items = array_map(static function (array $row): array {
         return [
@@ -89,6 +112,8 @@ try {
             'reservation_code' => (string) ($row['codigo'] ?? ''),
             'guest_name' => (string) ($row['hospedes'] ?? ''),
             'checkin_date' => (string) ($row['data_checkin'] ?? ''),
+            'checkout_date' => (string) ($row['data_checkout'] ?? ''),
+            'guest_count' => (int) ($row['guest_count'] ?? 0),
             'status' => (string) ($row['status'] ?? ''),
         ];
     }, $stmt->fetchAll());
