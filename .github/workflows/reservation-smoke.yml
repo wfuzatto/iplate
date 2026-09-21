@@ -17,48 +17,22 @@ jobs:
           BASE="https://vale.expresso.app/iplate/backend/api"
           USERNAME="admin"
           PASSWORD="$(awk -F': ' '/^- senha:/{print $2; exit}' README.md)"
+
           if [ -z "$PASSWORD" ]; then
             echo "RESULT=PASSWORD_NOT_FOUND"
             exit 10
           fi
 
-          LOGIN="$(curl -fsS --max-time 20 -X POST "$BASE/login.php"             -H 'Accept: application/json'             --data-urlencode "username=$USERNAME"             --data-urlencode "password=$PASSWORD")"
-
-          TOKEN="$(LOGIN_JSON="$LOGIN" python3 - <<'PY'
-import json, os
-data=json.loads(os.environ['LOGIN_JSON'])
-print(((data.get('user') or {}).get('api_token') or '').strip())
-PY
-          )"
+          LOGIN="$(curl -fsS --max-time 20 -X POST "$BASE/login.php" -H 'Accept: application/json' --data-urlencode "username=$USERNAME" --data-urlencode "password=$PASSWORD")"
+          TOKEN="$(printf '%s' "$LOGIN" | python3 -c "import json,sys; d=json.load(sys.stdin); print(((d.get('user') or {}).get('api_token') or '').strip())")"
 
           if [ -z "$TOKEN" ]; then
-            LOGIN_OK="$(LOGIN_JSON="$LOGIN" python3 - <<'PY'
-import json, os
-data=json.loads(os.environ['LOGIN_JSON'])
-print('true' if data.get('success') else 'false')
-PY
-            )"
+            LOGIN_OK="$(printf '%s' "$LOGIN" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('success') else 'false')")"
             echo "RESULT=LOGIN_TOKEN_MISSING"
             echo "LOGIN_SUCCESS=$LOGIN_OK"
             exit 11
           fi
 
-          LOOKUP="$(curl -fsS --max-time 20 -G "$BASE/reservation-search.php"             --data-urlencode "api_token=$TOKEN"             --data-urlencode "term=2505371"             --data-urlencode "exact=1")"
+          LOOKUP="$(curl -fsS --max-time 20 -G "$BASE/reservation-search.php" --data-urlencode "api_token=$TOKEN" --data-urlencode "term=2505371" --data-urlencode "exact=1")"
 
-          LOOKUP_JSON="$LOOKUP" python3 - <<'PY'
-import json, os, sys
-data=json.loads(os.environ['LOOKUP_JSON'])
-items=data.get('items') or []
-match=next((x for x in items if str(x.get('reservation_code',''))=='2505371'), None)
-print('API_SUCCESS=' + ('true' if data.get('success') else 'false'))
-print('ITEM_COUNT=' + str(len(items)))
-print('FOUND=' + ('true' if match else 'false'))
-if match:
-    print('STATUS=' + str(match.get('status','')))
-    print('HAS_GUEST_NAME=' + ('true' if bool(str(match.get('guest_name','')).strip()) else 'false'))
-    print('HAS_CHECKIN=' + ('true' if bool(str(match.get('checkin_date','')).strip()) else 'false'))
-    print('HAS_CHECKOUT=' + ('true' if bool(str(match.get('checkout_date','')).strip()) else 'false'))
-    print('GUEST_COUNT=' + str(match.get('guest_count','')))
-    sys.exit(0)
-sys.exit(12)
-PY
+          printf '%s' "$LOOKUP" | python3 -c "import json,sys; d=json.load(sys.stdin); items=d.get('items') or []; m=next((x for x in items if str(x.get('reservation_code',''))=='2505371'), None); print('API_SUCCESS=' + ('true' if d.get('success') else 'false')); print('ITEM_COUNT=' + str(len(items))); print('FOUND=' + ('true' if m else 'false')); print('STATUS=' + str((m or {}).get('status',''))); print('HAS_GUEST_NAME=' + ('true' if bool(str((m or {}).get('guest_name','')).strip()) else 'false')); print('HAS_CHECKIN=' + ('true' if bool(str((m or {}).get('checkin_date','')).strip()) else 'false')); print('HAS_CHECKOUT=' + ('true' if bool(str((m or {}).get('checkout_date','')).strip()) else 'false')); print('GUEST_COUNT=' + str((m or {}).get('guest_count',''))); sys.exit(0 if m else 12)"
