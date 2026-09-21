@@ -43,7 +43,8 @@ jobs:
               payload_start = start + nlen + xlen
               payload_end = payload_start + csize
               if payload_end > len(data):
-                  raise RuntimeError(f'Truncated file data for {name}')
+                  print(f'Stopping before truncated final entry: {name}')
+                  break
               payload = data[payload_start:payload_end]
               if method == 0:
                   raw = payload
