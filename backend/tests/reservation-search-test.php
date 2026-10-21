@@ -43,7 +43,7 @@ try {
     $pdo->exec('INSERT INTO reserva_hospedes VALUES (1,1,1),(1,1,2),(2,1,1),(3,1,1)');
     mkdir($directory.'/api',0700,true);
     copy(dirname(__DIR__).'/api/reservation-search.php',$directory.'/api/reservation-search.php');
-    file_put_contents($directory.'/config.php','<?php return '.var_export(['hotelaria_db'=>$db],true).';');
+    file_put_contents($directory.'/config.php','<?php return '.var_export(['hotelaria_db'=>$db,'reservation'=>['provider'=>'hotelaria_sql','suggestions_source'=>'hotelaria_sql']],true).';');
     file_put_contents($directory.'/db.php', <<<'PHP'
 <?php
 $config=require __DIR__.'/config.php';$d=$config['hotelaria_db'];

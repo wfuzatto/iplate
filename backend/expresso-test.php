@@ -6,7 +6,7 @@ date_default_timezone_set('America/Sao_Paulo');
 $defaultTokenUrl = 'https://vale.expresso.app/api/obter_token';
 $defaultReservaUrl = 'https://vale.expresso.app/api/reserva';
 $defaultAnexoUrl = 'https://vale.expresso.app/api/anexo';
-$defaultUser = getenv('IPLATE_EXPRESSO_USER') ?: '';
+$defaultUser = getenv('IPLATE_EXPRESSO_CPF') ?: getenv('IPLATE_EXPRESSO_USER') ?: '';
 $defaultPassword = getenv('IPLATE_EXPRESSO_PASSWORD') ?: '';
 $defaultReserva = '123123';
 
@@ -104,7 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $result['steps'][] = ['name' => 'Validacao', 'ok' => false, 'message' => 'Selecione uma foto de teste.'];
     } else {
         $tokenResponse = postJson($tokenUrl, [
-            'user' => $user,
+            'cpf' => $user,
             'password' => $password,
         ]);
         $token = (string) ($tokenResponse['json']['token'] ?? '');

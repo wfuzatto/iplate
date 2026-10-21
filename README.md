@@ -35,3 +35,30 @@ Fotos em `backend/uploads/`, builds Android, `.gradle/`, `local.properties`, arq
 ## Segurança
 
 Nunca faça commit de senhas de banco, tokens, credenciais da API Expresso, fotos reais de hóspedes/veículos ou arquivos `config.local.php`.
+
+## Busca de reservas — integracao Expresso
+
+O backend usa por padrao o **mesmo contrato do Acqua Vale Vendas**:
+1. POST JSON `/api/obter_token` com `{"cpf":"...","password":"..."}`.
+2. POST JSON `/api/reserva` com `{"token":"...","numero_reserva":"..."}`.
+3. API iPlate `backend/api/reservation-search.php?api_token=...&term=2505371&exact=1`
+   mantem o retorno `{"success":true,"items":[...]}`, compatível com o app.
+
+Configure as variaveis **no servidor**: `IPLATE_EXPRESSO_CPF`,
+`IPLATE_EXPRESSO_PASSWORD`. Alternativamente, use as chaves
+`expresso.cpf` e `expresso.password` em `backend/config.local.php`.
+Nao copie credenciais de producao para o repositorio.
+
+O Expresso so oferece neste contrato busca pelo codigo **completo**.
+A busca parcial / sugestoes retorna lista vazia em instalacoes novas; nao e erro.
+Para preservar o autocomplete com o banco antigo, configure
+`IPLATE_RESERVATION_SUGGESTIONS=hotelaria_sql` apenas se as tabelas
+`reservas`, `reserva_hospedes` e `hospedes` ainda existirem.
+Para retornar integralmente ao provedor antigo, use
+`IPLATE_RESERVATION_PROVIDER=hotelaria_sql`. A nova busca exata
+nao depende das tabelas antigas e nao limita a data de check-in a hoje.
+
+O app Android usa o campo rotulado "CPF da API Expresso" na configuracao
+existente e envia `cpf` para obtencao de token tanto na consulta
+quanto no envio de anexos. Atualize/recompile o APK para usar esse ajuste.
+Teste local sem rede: `php backend/tests/expresso-reservation-test.php`.

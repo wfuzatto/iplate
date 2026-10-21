@@ -1,0 +1,29 @@
+name: iPlate reservation contract checks
+on:
+  push:
+    paths:
+      - 'backend/api/reservation-search.php'
+      - 'backend/lib/ExpressoReservationClient.php'
+      - 'backend/config.php'
+      - 'backend/tests/**'
+      - '.github/workflows/iplate-reservations.yml'
+  pull_request:
+    paths:
+      - 'backend/api/reservation-search.php'
+      - 'backend/lib/ExpressoReservationClient.php'
+      - 'backend/config.php'
+      - 'backend/tests/**'
+      - '.github/workflows/iplate-reservations.yml'
+jobs:
+  php-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check PHP syntax
+        run: |
+          php -l backend/lib/ExpressoReservationClient.php
+          php -l backend/api/reservation-search.php
+          php -l backend/config.php
+          php -l backend/tests/expresso-reservation-test.php
+      - name: Test API contract without production credentials
+        run: php backend/tests/expresso-reservation-test.php

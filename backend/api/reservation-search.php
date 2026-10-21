@@ -1,109 +1,90 @@
 <?php
-
 declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
-
+header('Cache-Control: no-store, private');
 require __DIR__ . '/../db.php';
 
-if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
-    http_response_code(405);
-    echo json_encode(['success' => false, 'items' => [], 'message' => 'Metodo nao permitido.']);
+function reservationSearchReply(int $http, bool $success, array $items, string $message = ''): never
+{
+    http_response_code($http);
+    $payload = ['success' => $success, 'items' => $items];
+    if ($message !== '') $payload['message'] = $message;
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
     exit;
+}
+
+if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'GET') {
+    reservationSearchReply(405, false, [], 'Metodo nao permitido.');
 }
 
 $term = trim((string) ($_GET['term'] ?? ''));
-$apiToken = trim((string) ($_GET['api_token'] ?? ''));
 $exact = (string) ($_GET['exact'] ?? '') === '1';
+$apiToken = trim((string) ($_GET['api_token'] ?? ''));
 
 if (mb_strlen($term) < 3) {
-    echo json_encode(['success' => true, 'items' => []]);
-    exit;
+    reservationSearchReply(200, true, []);
 }
-
+if (mb_strlen($term) > 100) {
+    reservationSearchReply(422, false, [], 'Termo de busca muito longo.');
+}
 if ($apiToken === '') {
-    http_response_code(401);
-    echo json_encode(['success' => false, 'items' => [], 'message' => 'Usuario nao autenticado.']);
-    exit;
+    reservationSearchReply(401, false, [], 'Usuario nao autenticado.');
 }
-
-$userStmt = $pdo->prepare('SELECT id FROM ' . TABLE_USERS . ' WHERE api_token = :api_token AND is_active = 1 LIMIT 1');
-$userStmt->execute([':api_token' => $apiToken]);
-$user = $userStmt->fetch();
-
-if (!$user) {
-    http_response_code(401);
-    echo json_encode(['success' => false, 'items' => [], 'message' => 'Sessao do usuario invalida.']);
-    exit;
-}
-
-$config = require __DIR__ . '/../config.php';
-$hotelariaDb = $config['hotelaria_db'];
-
-$hotelariaDsn = sprintf(
-    'mysql:host=%s;port=%d;dbname=%s;charset=%s',
-    $hotelariaDb['host'],
-    $hotelariaDb['port'],
-    $hotelariaDb['database'],
-    $hotelariaDb['charset']
-);
 
 try {
-    $hotelariaPdo = new PDO($hotelariaDsn, $hotelariaDb['username'], $hotelariaDb['password'], [
+    $stmt = $pdo->prepare('SELECT id FROM ' . TABLE_USERS . ' WHERE api_token = :token AND is_active = 1 LIMIT 1');
+    $stmt->execute([':token' => $apiToken]);
+    if (!$stmt->fetch()) {
+        reservationSearchReply(401, false, [], 'Sessao do usuario invalida.');
+    }
+
+    $config = require __DIR__ . '/../config.php';
+    $reservationConfig = $config['reservation'] ?? [];
+    $provider = strtolower((string) ($reservationConfig['provider'] ?? 'expresso'));
+    $suggestionsSource = strtolower((string) ($reservationConfig['suggestions_source'] ?? 'none'));
+
+    if ($exact && $provider !== 'hotelaria_sql') {
+        require_once __DIR__ . '/../lib/ExpressoReservationClient.php';
+        $found = (new ExpressoReservationClient($config['expresso'] ?? []))->lookup($term);
+        reservationSearchReply(200, true, $found === [] ? [] : [$found]);
+    }
+
+    // A API Expresso documentada oferece consulta por codigo completo, nao autocomplete.
+    // Em instalacoes migradas, nao consultar automaticamente as tabelas antigas.
+    if (!$exact && $suggestionsSource !== 'hotelaria_sql') {
+        reservationSearchReply(200, true, [], 'Digite o numero completo da reserva para consultar.');
+    }
+
+    // Integracao legada e opcional para instalacoes que ainda possuem as tabelas.
+    $db = $config['hotelaria_db'];
+    $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=%s',
+        $db['host'], (int) $db['port'], $db['database'], $db['charset']);
+    $hotelariaPdo = new PDO($dsn, $db['username'], $db['password'], [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES => false,
     ]);
-
+    $select = 'SELECT r.id AS reserva_id, r.codigo, r.status, r.data_checkin, r.data_checkout,
+                      COUNT(DISTINCT h.id) AS guest_count,
+                      GROUP_CONCAT(DISTINCT h.nome ORDER BY h.nome SEPARATOR ", ") AS hospedes
+               FROM reservas r
+               LEFT JOIN reserva_hospedes rh ON rh.reserva_id = r.id AND rh.cliente_id = r.cliente_id
+               LEFT JOIN hospedes h ON h.id = rh.hospede_id';
     if ($exact) {
         $stmt = $hotelariaPdo->prepare(
-            'SELECT
-                r.id AS reserva_id,
-                r.codigo,
-                r.status,
-                r.data_checkin,
-                r.data_checkout,
-                COUNT(DISTINCT h.id) AS guest_count,
-                GROUP_CONCAT(DISTINCT h.nome ORDER BY h.nome SEPARATOR ", ") AS hospedes
-             FROM reservas r
-             LEFT JOIN reserva_hospedes rh ON rh.reserva_id = r.id AND rh.cliente_id = r.cliente_id
-             LEFT JOIN hospedes h ON h.id = rh.hospede_id
-             WHERE r.codigo = :codigo
-               AND r.status IN ("confirmada", "checkin")
-             GROUP BY r.id, r.codigo, r.status, r.data_checkin, r.data_checkout
-             LIMIT 1'
+            $select . ' WHERE r.codigo = :term AND r.status IN ("confirmada", "checkin")
+             GROUP BY r.id, r.codigo, r.status, r.data_checkin, r.data_checkout LIMIT 1'
         );
-        $stmt->execute([':codigo' => $term]);
+        $stmt->execute([':term' => $term]);
     } else {
-        $like = '%' . $term . '%';
         $stmt = $hotelariaPdo->prepare(
-            'SELECT
-                r.id AS reserva_id,
-                r.codigo,
-                r.status,
-                r.data_checkin,
-                r.data_checkout,
-                COUNT(DISTINCT h.id) AS guest_count,
-                GROUP_CONCAT(DISTINCT h.nome ORDER BY h.nome SEPARATOR ", ") AS hospedes
-             FROM reservas r
-             LEFT JOIN reserva_hospedes rh ON rh.reserva_id = r.id AND rh.cliente_id = r.cliente_id
-             LEFT JOIN hospedes h ON h.id = rh.hospede_id
-             WHERE r.data_checkin = CURDATE()
-               AND r.status IN ("confirmada", "checkin")
-               AND (
-                    r.codigo LIKE :like_codigo
-                    OR COALESCE(h.nome, "") LIKE :like_nome
-               )
+            $select . ' WHERE r.data_checkin = CURDATE() AND r.status IN ("confirmada", "checkin")
+                  AND (r.codigo LIKE :code OR COALESCE(h.nome, "") LIKE :guest)
              GROUP BY r.id, r.codigo, r.status, r.data_checkin, r.data_checkout
-             ORDER BY
-                CASE WHEN r.status = "checkin" THEN 0 ELSE 1 END,
-                r.codigo ASC
-             LIMIT 25'
+             ORDER BY CASE WHEN r.status = "checkin" THEN 0 ELSE 1 END, r.codigo LIMIT 25'
         );
-        $stmt->execute([
-            ':like_codigo' => $like,
-            ':like_nome' => $like,
-        ]);
+        $stmt->execute([':code' => '%' . $term . '%', ':guest' => '%' . $term . '%']);
     }
 
     $items = array_map(static function (array $row): array {
@@ -115,17 +96,11 @@ try {
             'checkout_date' => (string) ($row['data_checkout'] ?? ''),
             'guest_count' => (int) ($row['guest_count'] ?? 0),
             'status' => (string) ($row['status'] ?? ''),
+            'source' => 'hotelaria_sql',
         ];
     }, $stmt->fetchAll());
-
-    echo json_encode([
-        'success' => true,
-        'items' => $items,
-    ]);
-} catch (Throwable $throwable) {
-    echo json_encode([
-        'success' => true,
-        'items' => [],
-        'message' => 'Busca indisponivel no momento: ' . $throwable->getMessage(),
-    ]);
+    reservationSearchReply(200, true, $items);
+} catch (Throwable $error) {
+    error_log('[iPlate] Reservation search error: ' . $error->getMessage());
+    reservationSearchReply(503, false, [], 'Consulta de reservas indisponivel. Verifique a integracao configurada.');
 }

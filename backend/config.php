@@ -40,6 +40,19 @@ return [
         'password' => $hotelariaLocal['password'] ?? $hotelariaDatabaseConfig['password'] ?? getenv('HOTELARIA_DB_PASSWORD') ?: '',
         'charset' => $hotelariaLocal['charset'] ?? $hotelariaDatabaseConfig['charset'] ?? 'utf8mb4',
     ],
+    'reservation' => [
+        // Expresso e o provedor atual. Use hotelaria_sql somente em instalacoes antigas.
+        'provider' => $localConfig['reservation']['provider'] ?? getenv('IPLATE_RESERVATION_PROVIDER') ?: 'expresso',
+        // A Expresso nao oferece autocomplete por nome/codigo parcial nesse contrato.
+        'suggestions_source' => $localConfig['reservation']['suggestions_source'] ?? getenv('IPLATE_RESERVATION_SUGGESTIONS') ?: 'none',
+    ],
+    'expresso' => [
+        'cpf' => $localConfig['expresso']['cpf'] ?? getenv('IPLATE_EXPRESSO_CPF') ?: getenv('IPLATE_EXPRESSO_USER') ?: '',
+        'password' => $localConfig['expresso']['password'] ?? getenv('IPLATE_EXPRESSO_PASSWORD') ?: '',
+        'token_url' => $localConfig['expresso']['token_url'] ?? getenv('IPLATE_EXPRESSO_TOKEN_URL') ?: 'https://vale.expresso.app/api/obter_token',
+        'reservation_url' => $localConfig['expresso']['reservation_url'] ?? getenv('IPLATE_EXPRESSO_RESERVATION_URL') ?: 'https://vale.expresso.app/api/reserva',
+        'timeout_seconds' => (int) ($localConfig['expresso']['timeout_seconds'] ?? getenv('IPLATE_EXPRESSO_TIMEOUT') ?: 20),
+    ],
     'app' => [
         'name' => 'iPlate',
         'base_url' => '',

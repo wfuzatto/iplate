@@ -516,7 +516,7 @@ private fun IPlateApp() {
                     OutlinedTextField(
                         value = draftExpressoUser,
                         onValueChange = { draftExpressoUser = it.trim() },
-                        label = { Text("Usuario API Expresso") },
+                        label = { Text("CPF da API Expresso") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -2126,7 +2126,7 @@ private fun obtainExpressoToken(
     apiPassword: String,
 ): String? {
     val body = JSONObject()
-        .put("user", apiUser)
+        .put("cpf", apiUser)
         .put("password", apiPassword)
         .toString()
         .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
@@ -2227,8 +2227,13 @@ private fun parseReservationLookupResult(root: JSONObject, reservationCode: Stri
         else -> root
     } ?: return null
 
+    val id = readJsonString(data, "reserva_id", "reservation_id", "id")
+    val code = readJsonString(data, "numero_reserva", "reservation_code", "reserva", "reservation", "codigo", "code")
+    if (id.isBlank() && code.isBlank()) return null
+    if (code.isNotBlank() && code != reservationCode) return null
+
     return ReservationLookupResult(
-        reservationId = readJsonString(data, "reserva_id", "reservation_id", "id"),
+        reservationId = id,
         reservationCode = readJsonString(data, "numero_reserva", "reserva", "reservation", "codigo", "code")
             .ifBlank { reservationCode },
         guestName = readJsonString(data, "hospede_nome", "nome_hospede_principal", "hospede_principal", "guest_name", "nome"),
