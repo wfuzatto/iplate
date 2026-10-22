@@ -25,8 +25,10 @@ Na primeira inicialização, quando necessário, o backend cria o usuário `admi
 
 1. Abra `android/` no Android Studio.
 2. Sincronize o Gradle.
-3. Em aparelho físico, ajuste no próprio aplicativo os endpoints do servidor e da integração Expresso.
-4. Credenciais de integração não ficam armazenadas no repositório; devem ser informadas na configuração local do app.
+3. Atualize o backend PHP **antes** de instalar o APK novo e configure `IPLATE_EXPRESSO_CPF` e `IPLATE_EXPRESSO_PASSWORD` apenas no servidor.
+4. Em aparelho físico, configure a URL do backend iPlate, entre com usuário/senha do operador e consulte uma reserva completa (exemplo fictício: `2505371`).
+5. O Android consulta reservas **por POST autenticado para o backend iPlate**, sem receber CPF/senha nem token Expresso. A API não oferece busca parcial por nome; o aplicativo aceita leitura de QR Code e número completo.
+6. **Compatibilidade de anexos:** a rotina legada `/api/anexo` ainda envia os anexos diretamente pelo Android e, por isso, exige CPF/senha Expresso nas configurações locais. Esses dados não devem ser incluídos no Git e **ainda ficam armazenados nas preferências locais do aplicativo**. Esta migração não altera o fluxo de anexos nem o substitui pelo webhook Vale Visitor.
 
 ## Dados e arquivos locais
 
@@ -41,8 +43,13 @@ Nunca faça commit de senhas de banco, tokens, credenciais da API Expresso, foto
 O backend usa por padrao o **mesmo contrato do Acqua Vale Vendas**:
 1. POST JSON `/api/obter_token` com `{"cpf":"...","password":"..."}`.
 2. POST JSON `/api/reserva` com `{"token":"...","numero_reserva":"..."}`.
-3. API iPlate `backend/api/reservation-search.php?api_token=...&term=2505371&exact=1`
-   mantem o retorno `{"success":true,"items":[...]}`, compatível com o app.
+3. O APK atual envia POST JSON para `backend/api/reservation-search.php` com
+   `{"api_token":"TOKEN_DO_OPERADOR_IPLATE","term":"2505371","exact":"1"}`.
+   O token do operador fica **no corpo HTTPS**, não na URL. O backend mantém
+   suporte GET para versões antigas do APK. O retorno continua
+   `{"success":true,"items":[...]}` com `reservation_id`, `reservation_code`,
+   `guest_name`, `guest_cpf`, `checkin_date`, `checkout_date`,
+   `adults`, `children`, `guest_count`, `uh` e `status`.
 
 Configure as variaveis **no servidor**: `IPLATE_EXPRESSO_CPF`,
 `IPLATE_EXPRESSO_PASSWORD`. Alternativamente, use as chaves
@@ -58,7 +65,18 @@ Para retornar integralmente ao provedor antigo, use
 `IPLATE_RESERVATION_PROVIDER=hotelaria_sql`. A nova busca exata
 nao depende das tabelas antigas e nao limita a data de check-in a hoje.
 
-O app Android usa o campo rotulado "CPF da API Expresso" na configuracao
-existente e envia `cpf` para obtencao de token tanto na consulta
-quanto no envio de anexos. Atualize/recompile o APK para usar esse ajuste.
-Teste local sem rede: `php backend/tests/expresso-reservation-test.php`.
+No backend, o CPF é utilizado para obter token via `/api/obter_token`, e
+a reserva é consultada por `/api/reserva`. O aplicativo não chama esses
+endpoints diretamente ao consultar reservas. A consulta exige login no iPlate.
+O campo "CPF da API Expresso (anexos)" do Android normaliza para 11 dígitos,
+sendo usado apenas pelo fluxo legado de upload de fotos para `/api/anexo`.
+
+**Atenção:** `/visitor/acquavale_receive.php` integra as vendas pagas ao
+Vale Visitor; não é um endpoint de busca do iPlate.
+
+Verificações sem credenciais de produção:
+`php backend/tests/expresso-reservation-test.php` e
+`./gradlew :app:assembleDebug` a partir de `android/`.
+O workflow Android publica o APK de depuração como artefato somente após
+compilação bem-sucedida. A consulta real e o upload de fotos requerem
+homologação no servidor e aparelho Android.
