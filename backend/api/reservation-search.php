@@ -14,13 +14,34 @@ function reservationSearchReply(int $http, bool $success, array $items, string $
     exit;
 }
 
-if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'GET') {
+// GET continua aceito apenas para APKs antigos. A versao atual envia
+// autenticacao e numero da reserva no corpo POST, evitando token no log da URL.
+$method = $_SERVER['REQUEST_METHOD'] ?? '';
+if (!in_array($method, ['GET', 'POST'], true)) {
+    header('Allow: GET, POST');
     reservationSearchReply(405, false, [], 'Metodo nao permitido.');
 }
 
-$term = trim((string) ($_GET['term'] ?? ''));
-$exact = (string) ($_GET['exact'] ?? '') === '1';
-$apiToken = trim((string) ($_GET['api_token'] ?? ''));
+$input = $_GET;
+if ($method === 'POST') {
+    $contentType = strtolower(trim(explode(';', (string) ($_SERVER['CONTENT_TYPE'] ?? ''))[0]));
+    if ($contentType === 'application/json') {
+        $raw = file_get_contents('php://input', false, null, 0, 8193);
+        if ($raw === false || strlen($raw) > 8192) {
+            reservationSearchReply(413, false, [], 'Requisicao muito grande.');
+        }
+        $input = json_decode($raw, true);
+        if (!is_array($input) || array_is_list($input)) {
+            reservationSearchReply(400, false, [], 'JSON invalido.');
+        }
+    } else {
+        $input = $_POST;
+    }
+}
+
+$term = trim((string) ($input['term'] ?? ''));
+$exact = (string) ($input['exact'] ?? '') === '1';
+$apiToken = trim((string) ($input['api_token'] ?? ''));
 
 if (mb_strlen($term) < 3) {
     reservationSearchReply(200, true, []);

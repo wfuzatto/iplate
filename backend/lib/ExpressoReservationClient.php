@@ -71,6 +71,9 @@ final class ExpressoReservationClient
         }
 
         $status = $this->read($data, ['status']);
+        if (in_array(strtolower($status), ['fail', 'error'], true)) {
+            throw new RuntimeException('A API Expresso rejeitou a consulta da reserva.');
+        }
         if (in_array(strtolower($status), [
             'cancelada', 'cancelado', 'cancelled', 'canceled', 'no-show', 'noshow',
         ], true)) {
@@ -85,11 +88,12 @@ final class ExpressoReservationClient
         }
 
         return [
-            'reservation_id' => ctype_digit($id) ? (int) $id : 0,
+            'reservation_id' => $id,
             'reservation_code' => $returnedCode !== '' ? $returnedCode : $code,
             'guest_name' => $this->read($data, [
                 'hospede_nome', 'nome_hospede_principal', 'hospede_principal', 'guest_name', 'nome',
             ]),
+            'guest_cpf' => $this->read($data, ['hospede_cpf', 'guest_cpf', 'cpf']),
             'checkin_date' => $this->read($data, ['data_checkin', 'checkin', 'checkin_date']),
             'checkout_date' => $this->read($data, ['data_checkout', 'checkout', 'checkout_date']),
             'guest_count' => max(0, (int) $guestCount),
