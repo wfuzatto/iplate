@@ -337,24 +337,27 @@ private fun IPlateApp() {
     }
     val lookupReservationDetails: (String, Boolean) -> Unit = { rawReservation, forceDialog ->
         val reservationCode = rawReservation.onlyDigits()
-        if (reservationCode.length >= 3 && reservationEndpoint.isBlank()) {
-            showMessage("Configure o endpoint de reservas para consultar os dados.")
+        if (reservationCode.length >= 3 && (serverUrl.isBlank() || authToken.isBlank())) {
+            showMessage("Faca login no iPlate para consultar a reserva no backend.")
         } else if (reservationCode.length >= 3 && (forceDialog || (!isFetchingReservation && reservationCode != lastReservationDetailsLookupCode))) {
             scope.launch {
                 isFetchingReservation = true
                 val lookupResult = fetchReservationDetails(
-                    tokenEndpointUrl = expressoTokenEndpoint,
-                    reservationEndpointUrl = reservationEndpoint,
-                    apiUser = expressoUser,
-                    apiPassword = expressoPassword,
+                    serverUrl = serverUrl,
+                    authToken = authToken,
                     reservationCode = reservationCode
                 )
-                lastReservationDetailsLookupCode = reservationCode
-                if (lookupResult.details == null) {
-                    showMessage(lookupResult.message.ifBlank { "Nao foi possivel consultar a reserva." })
-                } else {
-                    selectedExpressoReservationId = lookupResult.details.reservationId
-                    selectedReservationDetails = lookupResult.details
+                // Descartar resposta antiga quando o codigo muda durante a consulta.
+                if (reservation.onlyDigits() == reservationCode) {
+                    if (lookupResult.details == null) {
+                        selectedExpressoReservationId = ""
+                        selectedReservationDetails = null
+                        showMessage(lookupResult.message.ifBlank { "Nao foi possivel consultar a reserva." })
+                    } else {
+                        lastReservationDetailsLookupCode = reservationCode
+                        selectedExpressoReservationId = lookupResult.details.reservationId
+                        selectedReservationDetails = lookupResult.details
+                    }
                 }
                 isFetchingReservation = false
             }
@@ -363,7 +366,7 @@ private fun IPlateApp() {
 
     LaunchedEffect(reservation) {
         val reservationCode = reservation.onlyDigits()
-        if (reservationCode.length < 3 || reservationCode == lastReservationDetailsLookupCode) {
+        if (reservationCode.length < 6 || reservationCode == lastReservationDetailsLookupCode) {
             return@LaunchedEffect
         }
 
@@ -480,14 +483,14 @@ private fun IPlateApp() {
                     OutlinedTextField(
                         value = draftReservationEndpoint,
                         onValueChange = { draftReservationEndpoint = it.trim() },
-                        label = { Text("Endpoint de reservas") },
-                        placeholder = { Text("https://.../{reservation}") },
+                        label = { Text("Endpoint de reservas (legado)") },
+                        placeholder = { Text(DEFAULT_RESERVATION_ENDPOINT) },
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = draftExpressoTokenEndpoint,
                         onValueChange = { draftExpressoTokenEndpoint = it.trim() },
-                        label = { Text("Endpoint token Expresso") },
+                        label = { Text("Endpoint token Expresso (anexos)") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -513,10 +516,15 @@ private fun IPlateApp() {
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                     )
+                    Text(
+                        text = "Consulta de reservas: autenticacao por CPF configurada no backend. Os campos locais abaixo ainda sao usados no envio direto de anexos.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                     OutlinedTextField(
                         value = draftExpressoUser,
-                        onValueChange = { draftExpressoUser = it.trim() },
-                        label = { Text("CPF da API Expresso") },
+                        onValueChange = { draftExpressoUser = it.onlyDigits().take(11) },
+                        label = { Text("CPF da API Expresso (anexos)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -799,6 +807,7 @@ private fun IPlateApp() {
                 onReservationExpandedChange = { reservationExpanded = it },
                 onReservationChange = { value ->
                     reservation = value
+                    lastReservationDetailsLookupCode = ""
                     selectedReservationId = 0
                     selectedExpressoReservationId = ""
                     selectedReservationDetails = null
@@ -1387,7 +1396,7 @@ private fun EntryScreen(
                                 }
                             },
                         label = { Text("Reserva") },
-                        placeholder = { Text("Reserva / Nome") },
+                        placeholder = { Text("Numero completo da reserva") },
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Text,
                             imeAction = ImeAction.Search
@@ -2036,20 +2045,22 @@ private suspend fun searchReservations(
     if (serverUrl.isBlank() || authToken.isBlank() || term.trim().length < 3) {
         return@withContext emptyList()
     }
-
-    val client = OkHttpClient()
-    val endpoint = deriveReservationSearchUrl(serverUrl, authToken, term)
+    val payload = JSONObject()
+        .put("api_token", authToken)
+        .put("term", term.trim())
+        .put("exact", "0")
+        .toString()
+        .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
     val request = Request.Builder()
-        .url(endpoint)
+        .url(deriveReservationSearchUrl(serverUrl))
+        .post(payload)
         .build()
-
     return@withContext runCatching {
-        client.newCall(request).execute().use { response ->
+        OkHttpClient().newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 emptyList()
             } else {
-                val raw = response.body?.string().orEmpty()
-                val json = JSONObject(raw)
+                val json = JSONObject(response.body?.string().orEmpty())
                 val items = json.optJSONArray("items") ?: JSONArray()
                 buildList {
                     for (index in 0 until items.length()) {
@@ -2071,51 +2082,50 @@ private suspend fun searchReservations(
 }
 
 private suspend fun fetchReservationDetails(
-    tokenEndpointUrl: String,
-    reservationEndpointUrl: String,
-    apiUser: String,
-    apiPassword: String,
+    serverUrl: String,
+    authToken: String,
     reservationCode: String,
 ): ReservationFetchResult = withContext(Dispatchers.IO) {
-    if (tokenEndpointUrl.isBlank() || reservationEndpointUrl.isBlank() || apiUser.isBlank() || apiPassword.isBlank() || reservationCode.isBlank()) {
-        return@withContext ReservationFetchResult(message = "Configure os dados da API Expresso.")
+    if (serverUrl.isBlank() || authToken.isBlank()) {
+        return@withContext ReservationFetchResult(message = "Faca login no iPlate para consultar.")
     }
-
-    val client = OkHttpClient()
-    val token = obtainExpressoToken(
-        client = client,
-        tokenEndpointUrl = tokenEndpointUrl,
-        apiUser = apiUser,
-        apiPassword = apiPassword
-    ) ?: return@withContext ReservationFetchResult(message = "Nao foi possivel obter token da API Expresso.")
-
-    val body = JSONObject()
-        .put("token", token)
-        .put("numero_reserva", reservationCode)
+    val code = reservationCode.onlyDigits()
+    if (code.length < 3) {
+        return@withContext ReservationFetchResult(message = "Informe o numero completo da reserva.")
+    }
+    // API Expresso chamada no servidor PHP: CPF e senha nao passam pelo app.
+    val payload = JSONObject()
+        .put("api_token", authToken)
+        .put("term", code)
+        .put("exact", "1")
         .toString()
         .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
     val request = Request.Builder()
-        .url(reservationEndpointUrl)
-        .post(body)
+        .url(deriveReservationSearchUrl(serverUrl))
+        .post(payload)
         .build()
-
     return@withContext runCatching {
-        client.newCall(request).execute().use { response ->
-            val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                ReservationFetchResult(message = "Falha ao consultar reserva: HTTP ${response.code}.")
+        OkHttpClient().newCall(request).execute().use { response ->
+            val json = runCatching { JSONObject(response.body?.string().orEmpty()) }.getOrNull()
+            if (json == null) {
+                ReservationFetchResult(message = "Resposta invalida do servidor iPlate.")
+            } else if (!response.isSuccessful || !json.optBoolean("success", false)) {
+                ReservationFetchResult(
+                    message = json.optString("message").ifBlank {
+                        "Falha na consulta iPlate (HTTP ${response.code})."
+                    }
+                )
             } else {
-                val root = JSONObject(raw)
-                val parsed = parseReservationLookupResult(root, reservationCode)
-                if (parsed == null) {
-                    ReservationFetchResult(message = root.optString("msg").ifBlank { "Reserva nao encontrada na API Expresso." })
+                val found = parseReservationLookupResult(json, code)
+                if (found == null) {
+                    ReservationFetchResult(message = "Reserva nao encontrada, cancelada ou sem identificador.")
                 } else {
-                    ReservationFetchResult(details = parsed)
+                    ReservationFetchResult(details = found)
                 }
             }
         }
-    }.getOrElse { error ->
-        ReservationFetchResult(message = error.message ?: "Falha ao consultar reserva na API Expresso.")
+    }.getOrElse {
+        ReservationFetchResult(message = "Falha de conexao com iPlate. Verifique rede e servidor.")
     }
 }
 
@@ -2125,8 +2135,9 @@ private fun obtainExpressoToken(
     apiUser: String,
     apiPassword: String,
 ): String? {
+    if (apiUser.onlyDigits().length != 11) return null
     val body = JSONObject()
-        .put("cpf", apiUser)
+        .put("cpf", apiUser.onlyDigits())
         .put("password", apiPassword)
         .toString()
         .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
@@ -2201,7 +2212,7 @@ private fun uploadExpressoAttachment(
     }
 }
 
-private fun deriveReservationSearchUrl(serverUrl: String, authToken: String, term: String): String {
+private fun deriveReservationSearchUrl(serverUrl: String): String {
     val marker = "/api/"
     val markerIndex = serverUrl.indexOf(marker)
     val base = if (markerIndex >= 0) {
@@ -2209,11 +2220,7 @@ private fun deriveReservationSearchUrl(serverUrl: String, authToken: String, ter
     } else {
         serverUrl.trimEnd('/') + "/api/"
     }
-
-    return base + "reservation-search.php?api_token=" +
-        Uri.encode(authToken) +
-        "&term=" +
-        Uri.encode(term)
+    return base + "reservation-search.php"
 }
 
 private fun parseReservationLookupResult(root: JSONObject, reservationCode: String): ReservationLookupResult? {
@@ -2222,19 +2229,21 @@ private fun parseReservationLookupResult(root: JSONObject, reservationCode: Stri
     }
 
     val data = when {
+        root.has("items") -> root.optJSONArray("items")?.optJSONObject(0)
         root.has("data") && root.optJSONObject("data") != null -> root.optJSONObject("data")
         root.has("reserva") && root.optJSONObject("reserva") != null -> root.optJSONObject("reserva")
         else -> root
     } ?: return null
+    if (readJsonString(data, "status").lowercase() in setOf("cancelada", "cancelado", "cancelled", "canceled", "no-show", "noshow", "fail", "error")) return null
 
     val id = readJsonString(data, "reserva_id", "reservation_id", "id")
     val code = readJsonString(data, "numero_reserva", "reservation_code", "reserva", "reservation", "codigo", "code")
-    if (id.isBlank() && code.isBlank()) return null
+    if (id.isBlank() || code.isBlank()) return null
     if (code.isNotBlank() && code != reservationCode) return null
 
     return ReservationLookupResult(
         reservationId = id,
-        reservationCode = readJsonString(data, "numero_reserva", "reserva", "reservation", "codigo", "code")
+        reservationCode = readJsonString(data, "numero_reserva", "reservation_code", "reserva", "reservation", "codigo", "code")
             .ifBlank { reservationCode },
         guestName = readJsonString(data, "hospede_nome", "nome_hospede_principal", "hospede_principal", "guest_name", "nome"),
         guestCpf = formatCpf(readJsonString(data, "hospede_cpf", "cpf", "guest_cpf")),
