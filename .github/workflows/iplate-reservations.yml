@@ -25,5 +25,8 @@ jobs:
           php -l backend/api/reservation-search.php
           php -l backend/config.php
           php -l backend/tests/expresso-reservation-test.php
+          php -l backend/tests/reservation-search-post-test.php
       - name: Test API contract without production credentials
-        run: php backend/tests/expresso-reservation-test.php
+        run: |
+          php backend/tests/expresso-reservation-test.php
+          php backend/tests/reservation-search-post-test.php
